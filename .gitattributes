@@ -1,0 +1,5 @@
+# Windows scripts keep Windows line endings, so cmd.exe and PowerShell read them correctly
+# on every machine that clones the repository.
+*.cmd  text eol=crlf
+*.ps1  text eol=crlf
+*.md   text eol=crlf
