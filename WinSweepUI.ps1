@@ -176,7 +176,7 @@ $stepHints = @{
                        ToolTip="24-hour time, for example 12:00 or 18:30"/>
             </StackPanel>
             <TextBlock Style="{StaticResource Hint}" Margin="0,8,0,0" FontSize="12"
-                       Text="Runs while the WinSweep icon is next to the clock. If the PC was off at that time, it runs a few minutes after you sign in."/>
+                       Text="Runs while the WinSweep icon is next to the clock. The icon starts at sign-in only while this is on. If the PC was off at that time, it runs a few minutes after you sign in."/>
             <TextBlock x:Name="NextRunText" Margin="0,10,0,0"/>
             <TextBlock x:Name="LastRunText" Margin="0,4,0,0"/>
           </StackPanel>
@@ -357,13 +357,39 @@ function Import-Schedule($schedule) {
     $TimeBox.Text         = $schedule.Time
 }
 
-# The next scheduled time, from the saved settings (the tray icon uses the same rule).
-function Show-NextRun {
-    $schedule = ((& $cleaner -ShowSettings) -join "`n" | ConvertFrom-Json).Schedule
-    $trayRunning = [bool](Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" |
+function Test-TrayRunning {
+    [bool](Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" |
         Where-Object { $_.CommandLine -like '*WinSweepTray.ps1*' })
-    if (-not $schedule.Enabled) { $NextRunText.Text = 'Next run: off'; return }
-    if (-not $trayRunning) {
+}
+
+# The tray icon runs, and starts at sign-in, only while automatic cleaning is on. Turning it off
+# removes the startup entry (the icon closes itself within half a minute). Turning it on adds the
+# entry and starts the icon. Only for the installed copy, not when run from the source folder.
+function Update-Startup([bool]$on) {
+    if ($appDir -ne (Join-Path $env:ProgramData 'WinSweep')) { return $false }
+    $runKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run'
+    if (-not $on) {
+        Remove-ItemProperty -Path $runKey -Name 'WinSweep' -ErrorAction SilentlyContinue
+        return $false
+    }
+    $powershell = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+    Set-ItemProperty -Path $runKey -Name 'WinSweep' `
+        -Value "`"$powershell`" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$(Join-Path $appDir 'WinSweepTray.ps1')`""
+    $trayShortcut = Join-Path $appDir 'Start tray icon.lnk'   # made by the installer
+    if ((Test-TrayRunning) -or -not (Test-Path -LiteralPath $trayShortcut)) { return $false }
+    # This window runs with admin rights. Explorer starts the icon as the signed-in user instead.
+    Start-Process explorer.exe -ArgumentList "`"$trayShortcut`""
+    $true
+}
+
+# The next scheduled time, from the saved settings (the tray icon uses the same rule).
+function Show-NextRun([switch]$TrayStarting) {
+    $schedule = ((& $cleaner -ShowSettings) -join "`n" | ConvertFrom-Json).Schedule
+    if (-not $schedule.Enabled) {
+        $NextRunText.Text = "Next run: off. WinSweep doesn't start by itself; open it from the Start menu when you need it."
+        return
+    }
+    if (-not $TrayStarting -and -not (Test-TrayRunning)) {
         $NextRunText.Text = 'Next run: none, because the WinSweep icon is closed. It starts again at your next sign-in, or when you open WinSweep from the Start menu.'
         return
     }
@@ -376,10 +402,11 @@ function Show-NextRun {
 
 function Save-All {
     Write-SettingsFile $settingsFile
+    $trayStarting = Update-Startup ([bool]$ScheduleOn.IsChecked)
     $script:dirty = $false
     $script:lastStatus = 'Changes saved at ' + (Get-Date).ToString('HH:mm') + '.'
     Update-Controls
-    Show-NextRun
+    Show-NextRun -TrayStarting:$trayStarting
 }
 # Newest cleanup log: the file and its last lines (enough for the output box).
 function Read-LastLog {

@@ -8,9 +8,11 @@
     - Creates the "WinSweep\Cleanup" scheduled task. It has no schedule of its own: it runs
       WinSweep.ps1 as SYSTEM when the tray icon starts it. Signed-in users may start it and read
       its status, not change it.
-    - Starts the tray icon at every sign-in. While the icon runs, WinSweep cleans on the schedule
-      set in the settings window (-Day and -At on a first install; Sunday 12:00 by default).
-    - Adds the "WinSweep" Start menu shortcut, which starts the icon and opens the window.
+    - Starts the tray icon at every sign-in while automatic cleaning is on. While the icon runs,
+      WinSweep cleans on the schedule set in the settings window (-Day and -At on a first
+      install; Sunday 12:00 by default).
+    - Adds the "WinSweep" Start menu shortcut, which opens the window (and starts the icon if
+      automatic cleaning is on).
 
     When WinSweep is already installed, its settings, logs and schedule are kept, unless -Day or
     -At is given. To remove everything, run Uninstall.cmd.
@@ -155,11 +157,21 @@ try {
     $scheduler.Connect()
     $scheduler.GetFolder('\WinSweep').GetTask('Cleanup').SetSecurityDescriptor('D:(A;;FA;;;SY)(A;;FA;;;BA)(A;;GRGX;;;AU)', 0)
 
-    # ---- Tray icon at every sign-in
+    # ---- Tray icon at every sign-in, only while automatic cleaning is on. The settings window
+    # adds or removes this entry when the schedule is switched on or off.
     $powershell = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
-    Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run' -Name 'WinSweep' -Value "`"$powershell`" $trayArgs"
+    $runKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run'
+    if ($schedule.Enabled) { Set-ItemProperty -Path $runKey -Name 'WinSweep' -Value "`"$powershell`" $trayArgs" }
+    else { Remove-ItemProperty -Path $runKey -Name 'WinSweep' -ErrorAction SilentlyContinue }
 
-    # ---- Start menu shortcut: starts the tray icon if needed and opens the window
+    # ---- Shortcut the settings window uses to start the tray icon without admin rights
+    $shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $installDir 'Start tray icon.lnk'))
+    $shortcut.TargetPath  = $powershell
+    $shortcut.Arguments   = $trayArgs
+    $shortcut.WindowStyle = 7
+    $shortcut.Save()
+
+    # ---- Start menu shortcut: opens the window, and starts the tray icon if automatic cleaning is on
     $shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut("$env:ProgramData\Microsoft\Windows\Start Menu\Programs\WinSweep.lnk")
     $shortcut.TargetPath   = $powershell
     $shortcut.Arguments    = "$trayArgs -Open"
@@ -172,7 +184,8 @@ try {
     # (then every program runs with admin rights anyway).
     $uacOff = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System').EnableLUA -eq 0
     if (-not $FromLauncher -and $uacOff) { Start-Process $powershell -ArgumentList $trayArgs -WindowStyle Hidden }
-    $trayNote = if ($FromLauncher -or $uacOff) { 'The WinSweep icon next to the clock means it is active. Click it to open WinSweep.' }
+    $trayNote = if (-not $schedule.Enabled) { "WinSweep doesn't start by itself. Open it from the Start menu when you need it." }
+                elseif ($FromLauncher -or $uacOff) { 'The WinSweep icon next to the clock means it is active. Click it to open WinSweep.' }
                 else { 'The WinSweep icon appears next to the clock at your next sign-in. To start it now, open WinSweep from the Start menu.' }
 
     $version = ((& (Join-Path $installDir 'WinSweep.ps1') -ShowSettings) -join "`n" | ConvertFrom-Json).Version

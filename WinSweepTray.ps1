@@ -8,15 +8,20 @@
     runs WinSweep.ps1 with admin rights). If the PC was off or the icon was closed at that
     time, the cleanup runs a few minutes after the icon starts again.
 
-    Close the icon (right-click > Close WinSweep) and nothing runs in the background until
-    WinSweep is opened again from the Start menu. The icon starts at every sign-in.
+    The icon only runs while automatic cleaning is on. It then starts at every sign-in (the
+    settings window adds or removes that startup entry). When automatic cleaning is turned off,
+    the icon closes itself, and it doesn't start from the Start menu shortcut either: that
+    shortcut then only opens the window.
+
+    Close the icon (right-click > Close WinSweep) and nothing runs in the background until the
+    next sign-in, or until WinSweep is opened again from the Start menu.
 
     Click the icon to open the settings window. Hover over it to see the next cleanup.
     It runs as the signed-in user, without admin rights, and never deletes anything itself.
 
 .PARAMETER Open
     Also open the settings window (used by the Start menu shortcut). If the icon is already
-    running, only the window opens.
+    running, or automatic cleaning is off, only the window opens.
 
 .PARAMETER ExportIcon
     Write the WinSweep icon (.ico) to this path and exit. The installer uses it for the
@@ -112,6 +117,13 @@ function Open-Window {
 }
 
 if ($Open) { Open-Window }
+
+# The icon only runs while automatic cleaning is on. A missing or damaged settings file means on
+# (the default).
+function Test-ScheduleOn {
+    try { "$(([IO.File]::ReadAllText($settingsFile) | ConvertFrom-Json).Schedule.Enabled)" -ne 'False' } catch { $true }
+}
+if (-not (Test-ScheduleOn)) { return }
 
 # One tray icon per signed-in user.
 $firstInstance = $false
@@ -245,7 +257,7 @@ $openItem = New-Object Windows.Forms.ToolStripMenuItem 'Open WinSweep'
 $openItem.Font = New-Object Drawing.Font $openItem.Font, ([Drawing.FontStyle]::Bold)
 $openItem.add_Click({ Open-Window })
 $closeItem = New-Object Windows.Forms.ToolStripMenuItem 'Close WinSweep'
-$closeItem.ToolTipText = 'No automatic cleaning until you open WinSweep again'
+$closeItem.ToolTipText = 'No automatic cleaning until your next sign-in or until you open WinSweep again'
 $closeItem.add_Click({ Stop-Tray })
 [void]$menu.Items.Add($openItem)
 [void]$menu.Items.Add($closeItem)
@@ -275,6 +287,7 @@ $timer = New-Object Windows.Forms.Timer
 $timer.Interval = 30000
 $timer.add_Tick({
     Update-Files
+    if (-not $script:schedule.Enabled) { Stop-Tray; return }   # turned off in the settings window
     Invoke-ScheduleCheck
     Update-Icon
     # Check more often while cleaning, so the broom stops soon after the cleanup ends.

@@ -2,8 +2,9 @@
 
 WinSweep deletes temp and junk files on Windows. It cleans automatically on a schedule you choose, and
 you can also start a cleanup yourself at any time. It's a few PowerShell scripts, a small settings
-window and an icon next to the clock. While the icon is there, WinSweep is active; close it and nothing
-of WinSweep runs. It doesn't connect to the internet and doesn't install a service.
+window and an icon next to the clock. While the icon is there, WinSweep is active; close it, or turn
+automatic cleaning off, and nothing of WinSweep runs. It doesn't connect to the internet and doesn't
+install a service.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Windows 10 | 11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6)
@@ -31,12 +32,15 @@ under the **^** arrow; you can drag it onto the taskbar.
 - **Click** the icon to open WinSweep.
 - **Hover** over it to see when the next cleanup is. While a cleanup runs, the broom moves.
 - **Right-click** it and choose **Close WinSweep** to stop it until your next sign-in, or until you
-  open WinSweep from the Start menu. To keep it from starting at sign-in, turn off **WinSweep** in
-  **Task Manager > Startup apps**.
+  open WinSweep from the Start menu.
 
-While the icon runs, WinSweep cleans every Sunday at 12:00. You can pick a different day and time or
-turn automatic cleaning off. If the PC was off or the icon was closed at that time, the cleanup runs a
-few minutes after the icon starts again.
+While the icon runs, WinSweep cleans every Sunday at 12:00. You can pick a different day and time. If
+the PC was off or the icon was closed at that time, the cleanup runs a few minutes after the icon
+starts again.
+
+If you turn **Clean automatically** off, the icon closes and WinSweep no longer starts at sign-in or in
+the background at all. The Start menu shortcut then only opens the window, where you can still clean
+by hand. Turn it back on and the icon starts again.
 
 In the WinSweep window you choose what to clean, set the schedule and click **Save changes**. **Preview**
 shows what would be deleted without deleting anything, and **Clean now** cleans right away. Each
@@ -81,10 +85,11 @@ the scripts there. That matters because the cleaner runs as SYSTEM. It also buil
 
 - A scheduled task, `WinSweep\Cleanup`, which runs the cleaner as SYSTEM. It has no schedule of its
   own; the tray icon starts it. Signed-in users may start it, not change it.
-- A startup entry for the tray icon. The icon runs as you, without admin rights, and never deletes
-  anything itself. It checks every 30 seconds whether a cleanup is due and uses about 70 MB of
-  memory (mostly PowerShell itself) and no noticeable CPU.
-- The Start menu shortcut, which starts the icon (if it isn't running) and opens the window.
+- A startup entry for the tray icon, only while automatic cleaning is on. The icon runs as you,
+  without admin rights, and never deletes anything itself. It checks every 30 seconds whether a
+  cleanup is due and uses about 70 MB of memory (mostly PowerShell itself) and no noticeable CPU.
+- The Start menu shortcut, which opens the window and, while automatic cleaning is on, starts the
+  icon if it isn't running.
 
 `WinSweep.ps1` does the cleaning. It reads folders with the .NET file APIs instead of `Get-ChildItem`,
 which is about 10 times faster on large folders. On my PC it scans the Windows Update folder (about
