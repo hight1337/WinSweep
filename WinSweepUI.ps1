@@ -3,11 +3,13 @@
     Settings window for WinSweep.
 
 .DESCRIPTION
-    Turn cleanup steps on or off, change the weekly schedule, preview a cleanup,
-    run one now and read the logs. Save writes settings.json next to WinSweep.ps1
-    and updates the scheduled task. Preview and Clean now use the choices on screen
-    without saving them. Opens with a UAC prompt, because changing the scheduled task
-    and cleaning system folders needs admin rights.
+    Turn cleanup steps on or off, change the schedule, preview a cleanup, run one now and
+    read the logs. "Save changes" writes settings.json next to WinSweep.ps1; the tray icon
+    reads the schedule from there. Preview and Clean now use the choices on screen without
+    saving them.
+
+    The window asks for admin rights (UAC prompt), because cleaning system folders and
+    changing settings that the cleaner uses with admin rights need them.
 #>
 
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
@@ -20,7 +22,7 @@ if (-not $identity.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrat
             -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$PSCommandPath`""
     } catch {
         [Windows.MessageBox]::Show(
-            "WinSweep needs admin rights to change the schedule and clean system folders.`n`nOpen it again and click Yes when Windows asks.",
+            "WinSweep needs admin rights to clean system folders and change its settings.`n`nOpen it again and click Yes when Windows asks.",
             'WinSweep', 'OK', 'Information') | Out-Null
     }
     exit
@@ -29,8 +31,24 @@ if (-not $identity.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrat
 $appDir       = $PSScriptRoot
 $cleaner      = Join-Path $appDir 'WinSweep.ps1'
 $settingsFile = Join-Path $appDir 'settings.json'
+$statusFile   = Join-Path $appDir 'status.json'
 $logDir       = Join-Path $appDir 'logs'
-$taskName     = 'WinSweep'
+$runDir       = Join-Path $appDir 'run'   # files for a running preview or cleanup; admin-only, like the whole folder
+$iconFile     = Join-Path $appDir 'WinSweep.ico'
+
+# One window at a time, so two windows can't overwrite each other's changes.
+$firstWindow = $false
+$windowLock = New-Object Threading.Mutex($true, 'Local\WinSweepWindow', [ref]$firstWindow)
+if (-not $firstWindow) {
+    [Windows.MessageBox]::Show('WinSweep is already open.', 'WinSweep', 'OK', 'Information') | Out-Null
+    exit
+}
+
+# Sharp text on scaled screens. Must run before the window is created.
+$nativeDll = Join-Path $appDir 'WinSweep.Native.dll'
+if (Test-Path -LiteralPath $nativeDll) { Add-Type -Path $nativeDll }
+else { Add-Type -TypeDefinition (Get-Content -LiteralPath (Join-Path $appDir 'WinSweepNative.cs') -Raw) }
+[WinSweep.Native]::SetProcessDPIAware() | Out-Null
 $dayNames     = 'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'
 $maxOutputLines = 2000
 
@@ -39,7 +57,7 @@ $stepHints = @{
     UserTemp             = 'Installer leftovers and app scratch files'
     WindowsTemp          = 'Leftovers from Windows and services'
     CrashDumps           = 'Saved when an app or Windows crashes'
-    UpdateDownloads      = 'Already installed updates. Skipped while an update waits for a restart'
+    UpdateDownloads      = 'Downloaded update files. Skipped while an update waits for a restart'
     DeliveryOptimization = 'Update files kept to share with other PCs'
     RecycleBin           = 'Only items deleted longer ago than the days set in Options'
     ComponentCleanup     = 'Old system files replaced by updates. Slow: 5-30 min'
@@ -158,7 +176,7 @@ $stepHints = @{
                        ToolTip="24-hour time, for example 12:00 or 18:30"/>
             </StackPanel>
             <TextBlock Style="{StaticResource Hint}" Margin="0,8,0,0" FontSize="12"
-                       Text="Runs in the background. If the PC is off at that time, it runs the next time the PC is on."/>
+                       Text="Runs while the WinSweep icon is next to the clock. If the PC was off at that time, it runs a few minutes after you sign in."/>
             <TextBlock x:Name="NextRunText" Margin="0,10,0,0"/>
             <TextBlock x:Name="LastRunText" Margin="0,4,0,0"/>
           </StackPanel>
@@ -189,8 +207,8 @@ $stepHints = @{
     </Grid>
 
     <DockPanel Grid.Row="2" Margin="0,0,0,10" LastChildFill="True">
-      <Button x:Name="SaveButton" Content="Save" Style="{StaticResource Primary}"
-              ToolTip="Save these settings and the schedule"/>
+      <Button x:Name="SaveButton" Content="Save changes" Style="{StaticResource Primary}"
+              />
       <Button x:Name="PreviewButton" Content="Preview"
               ToolTip="Show what would be deleted. Nothing is deleted. Uses the choices on screen."/>
       <Button x:Name="CleanButton" Content="Clean now"
@@ -240,7 +258,6 @@ $warnBrush = $brushes.ConvertFromString('#9D5D00')
 $script:loading    = $true    # true while controls are filled from saved settings
 $script:dirty      = $false   # unsaved changes on screen
 $script:busy       = $false   # a cleanup or preview is running
-$script:taskFound  = $false
 $script:lastStatus = ''
 
 $initial = (& $cleaner -ShowSettings) -join "`n" | ConvertFrom-Json
@@ -273,9 +290,9 @@ function Update-Controls {
     $PreviewButton.IsEnabled = -not $script:busy -and $anyStep
     $CleanButton.IsEnabled   = -not $script:busy -and $anyStep
     $StopButton.Visibility   = if ($script:busy) { 'Visible' } else { 'Collapsed' }
-    $ScheduleOn.IsEnabled    = $script:taskFound
-    $DayBox.IsEnabled        = $script:taskFound -and $ScheduleOn.IsChecked
-    $TimeBox.IsEnabled       = $script:taskFound -and $ScheduleOn.IsChecked
+    $DayBox.IsEnabled        = [bool]$ScheduleOn.IsChecked
+    $TimeBox.IsEnabled       = [bool]$ScheduleOn.IsChecked
+    $SaveButton.ToolTip      = if ($script:dirty) { 'Save your changes to what gets cleaned and to the schedule' } else { 'Nothing to save: change a setting first' }
     if ($anyStep) { $PreviewButton.ToolTip = 'Show what would be deleted. Nothing is deleted. Uses the choices on screen.' }
     else { $PreviewButton.ToolTip = 'Tick at least one item under What to clean.' }
     $CleanButton.ToolTip = if ($anyStep) { 'Delete the selected junk files now. Uses the choices on screen.' } else { $PreviewButton.ToolTip }
@@ -307,6 +324,15 @@ function Import-Settings($settings) {
     $ListFilesBox.IsChecked = [bool]$settings.ListFiles
 }
 
+function Read-Time {
+    $time = [datetime]::MinValue
+    if (-not [datetime]::TryParseExact($TimeBox.Text.Trim(), 'H:mm', [Globalization.CultureInfo]::InvariantCulture,
+                                       'None', [ref]$time)) {
+        throw 'Time must be in 24-hour format, for example 12:00 or 18:30.'
+    }
+    $time.ToString('HH:mm')
+}
+
 # Writes the choices on screen to a settings file. Throws with a clear message on bad input.
 function Write-SettingsFile([string]$path) {
     $settings = [ordered]@{
@@ -315,58 +341,46 @@ function Write-SettingsFile([string]$path) {
         RecycleBinDays = Read-Number $BinDaysBox 'Recycle Bin days' 1 3650
         ListFiles      = [bool]$ListFilesBox.IsChecked
         KeepLogs       = Read-Number $KeepLogsBox 'Number of cleanup logs' 1 1000
+        Schedule       = [ordered]@{
+            Enabled = [bool]$ScheduleOn.IsChecked
+            Day     = $dayNames[$DayBox.SelectedIndex]
+            Time    = Read-Time
+        }
     }
     foreach ($step in $stepBoxes.Keys) { $settings.Steps[$step] = [bool]$stepBoxes[$step].IsChecked }
     $settings | ConvertTo-Json | Set-Content -LiteralPath $path -Encoding UTF8
 }
 
-function Import-Schedule {
-    $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
-    $script:taskFound = [bool]$task
-    if ($task) {
-        $trigger = $task.Triggers | Where-Object { $_.StartBoundary } | Select-Object -First 1
-        $day = if ($trigger) { 0..6 | Where-Object { [int]$trigger.DaysOfWeek -band (1 -shl $_) } | Select-Object -First 1 }
-        $DayBox.SelectedIndex = if ($null -ne $day) { $day } else { 0 }
-        $TimeBox.Text = if ($trigger) { ([datetime]$trigger.StartBoundary).ToString('HH:mm') } else { '12:00' }
-        $ScheduleOn.IsChecked = $task.State -ne 'Disabled'
-    }
-    Show-NextRun
+function Import-Schedule($schedule) {
+    $ScheduleOn.IsChecked = [bool]$schedule.Enabled
+    $DayBox.SelectedIndex = [array]::IndexOf($dayNames, "$($schedule.Day)")
+    $TimeBox.Text         = $schedule.Time
 }
 
+# The next scheduled time, from the saved settings (the tray icon uses the same rule).
 function Show-NextRun {
-    $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
-    if (-not $task) { $NextRunText.Text = 'The weekly task is missing. Run Install.cmd again to restore it.'; return }
-    if ($task.State -eq 'Disabled') { $NextRunText.Text = 'Next run: off'; return }
-    $next = (Get-ScheduledTaskInfo -TaskName $taskName).NextRunTime
-    $NextRunText.Text = if ($next) { 'Next run: ' + $next.ToString('dddd, d MMM yyyy, HH:mm') } else { 'Next run: not planned' }
-}
-
-function Save-Schedule {
-    if (-not $script:taskFound) { return }
-    $time = [datetime]::MinValue
-    if (-not [datetime]::TryParseExact($TimeBox.Text.Trim(), 'H:mm', [Globalization.CultureInfo]::InvariantCulture,
-                                       'None', [ref]$time)) {
-        throw 'Time must be in 24-hour format, for example 12:00 or 18:30.'
+    $schedule = ((& $cleaner -ShowSettings) -join "`n" | ConvertFrom-Json).Schedule
+    $trayRunning = [bool](Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" |
+        Where-Object { $_.CommandLine -like '*WinSweepTray.ps1*' })
+    if (-not $schedule.Enabled) { $NextRunText.Text = 'Next run: off'; return }
+    if (-not $trayRunning) {
+        $NextRunText.Text = 'Next run: none, because the WinSweep icon is closed. It starts again at your next sign-in, or when you open WinSweep from the Start menu.'
+        return
     }
-    $trigger = New-ScheduledTaskTrigger -Weekly -WeeksInterval 1 -DaysOfWeek $dayNames[$DayBox.SelectedIndex] -At $time
-    # Local time without a time zone, so the task keeps its clock time after daylight saving changes.
-    $trigger.StartBoundary = $time.ToString('yyyy-MM-dd\THH:mm:ss')
-    Set-ScheduledTask -TaskName $taskName -Trigger $trigger -ErrorAction Stop | Out-Null
-    if ($ScheduleOn.IsChecked) { Enable-ScheduledTask -TaskName $taskName -ErrorAction Stop | Out-Null }
-    else { Disable-ScheduledTask -TaskName $taskName -ErrorAction Stop | Out-Null }
+    $time = [datetime]::ParseExact($schedule.Time, 'HH:mm', [Globalization.CultureInfo]::InvariantCulture)
+    $next = (Get-Date).Date.AddHours($time.Hour).AddMinutes($time.Minute)
+    $next = $next.AddDays((7 + [int][DayOfWeek]$schedule.Day - [int]$next.DayOfWeek) % 7)
+    if ($next -le (Get-Date)) { $next = $next.AddDays(7) }
+    $NextRunText.Text = 'Next run: ' + $next.ToString('dddd, d MMM yyyy, HH:mm')
 }
 
 function Save-All {
     Write-SettingsFile $settingsFile
-    Save-Schedule
-    $script:loading = $true
-    Import-Schedule
-    $script:loading = $false
     $script:dirty = $false
-    $script:lastStatus = 'Saved at ' + (Get-Date).ToString('HH:mm') + '.'
+    $script:lastStatus = 'Changes saved at ' + (Get-Date).ToString('HH:mm') + '.'
     Update-Controls
+    Show-NextRun
 }
-
 # Newest cleanup log: the file and its last lines (enough for the output box).
 function Read-LastLog {
     $file = Get-ChildItem -LiteralPath $logDir -Filter 'run-*.log' -ErrorAction SilentlyContinue |
@@ -498,9 +512,13 @@ $timer.Add_Tick({
 })
 
 function Start-Cleaner([bool]$dryRun) {
-    $script:runSettings = Join-Path $env:TEMP ('WinSweep-settings-{0}.json' -f [guid]::NewGuid())
+    # Run files go in the program folder, not in the user's temp folder: only admins can
+    # change them there, so nothing else can swap the settings the cleaner will use.
+    New-Item -ItemType Directory -Path $runDir -Force | Out-Null
+    $id = [guid]::NewGuid().ToString('N')
+    $script:runSettings = Join-Path $runDir "settings-$id.json"
     try { Write-SettingsFile $script:runSettings } catch { Show-Error $_.Exception.Message; return }
-    $script:liveLog  = Join-Path $env:TEMP ('WinSweep-live-{0}.log' -f [guid]::NewGuid())
+    $script:liveLog  = Join-Path $runDir "live-$id.log"
     $script:dryRun   = $dryRun
     $script:stopped  = $false
     $script:pending  = ''
@@ -527,7 +545,18 @@ function Stop-Cleaner {
     if ($script:process -and -not $script:process.HasExited) {
         $script:stopped = $true
         Stop-Process -Id $script:process.Id -Force -ErrorAction SilentlyContinue
+        if (-not $script:dryRun) { Write-StoppedStatus }
     }
+}
+
+# Records a stopped cleanup in status.json, so the tray icon does not start it again right away.
+function Write-StoppedStatus {
+    try {
+        $status = Get-Content -LiteralPath $statusFile -Raw -ErrorAction Stop | ConvertFrom-Json
+        $status.Running = $false
+        $status.LastRun = [ordered]@{ Finished = (Get-Date).ToString('o'); Result = 'stopped'; Message = 'Stopped in the settings window' }
+        $status | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $statusFile -Encoding UTF8
+    } catch { }
 }
 
 # --------------------------- Events ------------------------------
@@ -539,7 +568,7 @@ $ScheduleOn.Add_Click({ Set-Dirty })
 $SaveButton.Add_Click({ try { Save-All } catch { Show-Error $_.Exception.Message } })
 $PreviewButton.Add_Click({ Start-Cleaner $true })
 $CleanButton.Add_Click({
-    $answer = [Windows.MessageBox]::Show($window, 'Delete the selected junk files now?', 'WinSweep', 'YesNo', 'Question')
+    $answer = [Windows.MessageBox]::Show($window, "Clean up the selected junk files now?`n`nRecent files and files in use are left alone.", 'WinSweep', 'YesNo')
     if ($answer -eq 'Yes') { Start-Cleaner $false }
 })
 $StopButton.Add_Click({ Stop-Cleaner })
@@ -567,9 +596,10 @@ $window.Add_Closing({
 
 # --------------------------- Start -------------------------------
 Import-Settings $initial
-Import-Schedule
+Import-Schedule $initial.Schedule
 $script:loading = $false
 Update-Controls
+Show-NextRun
 
 $last = Read-LastLog
 Show-LastRun $last
@@ -580,6 +610,10 @@ if ($last) {
 } else {
     $OutputTitle.Text = 'Log'
     $Output.Text = 'No cleanup has run yet. Click Preview to see what would be deleted.'
+}
+
+if (Test-Path -LiteralPath $iconFile) {
+    $window.Icon = [Windows.Media.Imaging.BitmapFrame]::Create((New-Object Uri $iconFile))
 }
 
 $window.ShowDialog() | Out-Null

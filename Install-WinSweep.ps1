@@ -1,14 +1,19 @@
 <#
 .SYNOPSIS
-    Installs WinSweep and schedules it to run once a week.
+    Installs WinSweep, or updates an existing install.
 
 .DESCRIPTION
-    Copies WinSweep.ps1 and WinSweepUI.ps1 to C:\ProgramData\WinSweep,
-    registers the "WinSweep" scheduled task and adds a "WinSweep" Start menu
-    shortcut that opens the settings window. The task runs as SYSTEM every week on
-    -Day at -At. If the PC is off at that time, the task runs as soon as the PC is on again.
-    Settings saved in the window (settings.json) are kept when you install again.
-    To remove everything, run Uninstall.cmd.
+    - Creates C:\ProgramData\WinSweep so that only admins can change it, then copies the scripts
+      there and builds WinSweep.Native.dll from WinSweepNative.cs.
+    - Creates the "WinSweep\Cleanup" scheduled task. It has no schedule of its own: it runs
+      WinSweep.ps1 as SYSTEM when the tray icon starts it. Signed-in users may start it and read
+      its status, not change it.
+    - Starts the tray icon at every sign-in. While the icon runs, WinSweep cleans on the schedule
+      set in the settings window (-Day and -At on a first install; Sunday 12:00 by default).
+    - Adds the "WinSweep" Start menu shortcut, which starts the icon and opens the window.
+
+    When WinSweep is already installed, its settings, logs and schedule are kept, unless -Day or
+    -At is given. To remove everything, run Uninstall.cmd.
 
 .PARAMETER Quiet
     Do not show the "Installed" message at the end.
@@ -17,81 +22,162 @@ param(
     [ValidateSet('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday')]
     [string]$Day = 'Sunday',
     [string]$At = '12:00',
-    [switch]$Quiet
+    [switch]$Quiet,
+    [switch]$FromLauncher   # set by the first, non-admin copy of this script, which then starts the tray icon
 )
 
 Add-Type -AssemblyName PresentationFramework
 
-# Restart with admin rights if needed.
+$dayGiven   = $PSBoundParameters.ContainsKey('Day')
+$atGiven    = $PSBoundParameters.ContainsKey('At')
+$installDir = Join-Path $env:ProgramData 'WinSweep'
+$trayPath   = Join-Path $installDir 'WinSweepTray.ps1'
+$trayArgs   = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$trayPath`""
+
+# Restart with admin rights if needed. This first copy runs as the signed-in user, so after
+# the install it starts the tray icon without admin rights.
 $identity = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
 if (-not $identity.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    $arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Day $Day -At `"$At`""
+    $arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -FromLauncher"
+    if ($dayGiven) { $arguments += " -Day $Day" }
+    if ($atGiven)  { $arguments += " -At `"$At`"" }
     if ($Quiet) { $arguments += ' -Quiet' }
-    try { Start-Process powershell.exe -Verb RunAs -ArgumentList $arguments -ErrorAction Stop }
-    catch {
+    try {
+        $admin = Start-Process powershell.exe -Verb RunAs -ArgumentList $arguments -Wait -PassThru -ErrorAction Stop
+        if ($admin.ExitCode -eq 0 -and (Test-Path -LiteralPath $trayPath)) {
+            Start-Process powershell.exe -ArgumentList $trayArgs -WindowStyle Hidden
+        }
+    } catch {
         [Windows.MessageBox]::Show('WinSweep was not installed, because admin permission was not given.',
             'WinSweep', 'OK', 'Information') | Out-Null
     }
     exit
 }
 
+function Get-WinSweepProcesses([string]$script) {
+    Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" | Where-Object { $_.CommandLine -like "*$script*" }
+}
+
+# Only admins and SYSTEM may change the program folder, because SYSTEM runs code from it.
+# Any user can create folders in C:\ProgramData, so a folder that someone else created or
+# changed is moved aside, and the permissions are set from scratch before anything is copied.
+function Initialize-InstallFolder([string]$path) {
+    $system = New-Object Security.Principal.SecurityIdentifier 'S-1-5-18'
+    $admins = New-Object Security.Principal.SecurityIdentifier 'S-1-5-32-544'
+    $users  = New-Object Security.Principal.SecurityIdentifier 'S-1-5-32-545'
+
+    if (Test-Path -LiteralPath $path) {
+        $item  = Get-Item -LiteralPath $path -Force
+        $owner = (Get-Acl -LiteralPath $path).GetOwner([Security.Principal.SecurityIdentifier])
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or ($owner -ne $admins -and $owner -ne $system)) {
+            Rename-Item -LiteralPath $path -NewName ('WinSweep.untrusted-{0:yyyyMMdd-HHmmss}' -f (Get-Date))
+        }
+    }
+    New-Item -ItemType Directory -Path $path -Force | Out-Null
+
+    $acl = New-Object Security.AccessControl.DirectorySecurity
+    $acl.SetOwner($admins)
+    $acl.SetAccessRuleProtection($true, $false)   # no inherited rules
+    $inherit = [Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
+    foreach ($rule in @(@($system, 'FullControl'), @($admins, 'FullControl'), @($users, 'ReadAndExecute'))) {
+        $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule $rule[0], $rule[1], $inherit, 'None', 'Allow'))
+    }
+    Set-Acl -LiteralPath $path -AclObject $acl
+    # Existing files and folders inside: owner Administrators, only the rules above.
+    & icacls.exe $path /setowner '*S-1-5-32-544' /T /C /Q | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Could not set the owner of $path." }
+    & icacls.exe "$path\*" /reset /T /C /Q | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Could not set permissions in $path." }
+}
+
+# Moves the schedule of older versions (a trigger on the task) into settings.json, and applies
+# -Day and -At when they are given. Existing settings are kept.
+function Set-Schedule([string]$settingsFile, $oldTrigger, [bool]$oldEnabled) {
+    $settings = [ordered]@{}
+    if (Test-Path -LiteralPath $settingsFile) {
+        $saved = Get-Content -LiteralPath $settingsFile -Raw | ConvertFrom-Json
+        foreach ($property in $saved.PSObject.Properties) { $settings[$property.Name] = $property.Value }
+    }
+    $schedule = [ordered]@{ Enabled = $true; Day = $Day; Time = $At }
+    if ($settings.Schedule) {
+        $schedule = [ordered]@{ Enabled = $settings.Schedule.Enabled; Day = $settings.Schedule.Day; Time = $settings.Schedule.Time }
+    } elseif ($oldTrigger) {
+        $dayIndex = 0..6 | Where-Object { [int]$oldTrigger.DaysOfWeek -band (1 -shl $_) } | Select-Object -First 1
+        if ($null -ne $dayIndex) { $schedule.Day = ([DayOfWeek]$dayIndex).ToString() }
+        $schedule.Time    = ([datetime]$oldTrigger.StartBoundary).ToString('HH:mm')
+        $schedule.Enabled = $oldEnabled
+    }
+    if ($dayGiven) { $schedule.Day = $Day }
+    if ($atGiven) {
+        $schedule.Time = ([datetime]::ParseExact($At, 'H:mm', [Globalization.CultureInfo]::InvariantCulture)).ToString('HH:mm')
+    }
+    $settings.Schedule = $schedule
+    $settings | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $settingsFile -Encoding UTF8
+    $schedule
+}
+
 $ErrorActionPreference = 'Stop'
 try {
-    $installDir = 'C:\ProgramData\WinSweep'
-    $scriptPath = Join-Path $installDir 'WinSweep.ps1'
-    $uiPath     = Join-Path $installDir 'WinSweepUI.ps1'
+    if (Get-WinSweepProcesses 'WinSweepUI.ps1') { throw 'The WinSweep window is open. Close it and run Install.cmd again.' }
 
-    New-Item -ItemType Directory -Path $installDir -Force | Out-Null
-    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'WinSweep.ps1') -Destination $scriptPath -Force
-    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'WinSweepUI.ps1') -Destination $uiPath -Force
+    # Schedule of older versions: a trigger on the task "\WinSweep" (1.0) or "\WinSweep\Cleanup".
+    $old = Get-ScheduledTask -TaskPath '\WinSweep\' -TaskName 'Cleanup' -ErrorAction SilentlyContinue
+    if (-not $old) { $old = Get-ScheduledTask -TaskPath '\' -TaskName 'WinSweep' -ErrorAction SilentlyContinue }
+    $oldTrigger = $old.Triggers | Where-Object { $_.StartBoundary } | Select-Object -First 1
+    $oldEnabled = -not ($old -and ($old.State -eq 'Disabled' -or ($oldTrigger -and -not $oldTrigger.Enabled)))
 
-    # Replace an install from before the project was renamed ("Temp Cleaner"), keeping its settings and logs.
-    $legacyDir = 'C:\ProgramData\TempCleaner'
-    Unregister-ScheduledTask -TaskName 'TempCleaner' -Confirm:$false -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\Temp Cleaner.lnk" -Force -ErrorAction SilentlyContinue
-    if (Test-Path -LiteralPath $legacyDir) {
-        foreach ($item in 'settings.json', 'logs') {
-            $from = Join-Path $legacyDir $item
-            if ((Test-Path -LiteralPath $from) -and -not (Test-Path -LiteralPath (Join-Path $installDir $item))) {
-                Copy-Item -LiteralPath $from -Destination $installDir -Recurse
-            }
-        }
-        Remove-Item -LiteralPath $legacyDir -Recurse -Force
+    Get-WinSweepProcesses 'WinSweepTray.ps1' | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+
+    Initialize-InstallFolder $installDir
+    foreach ($file in 'WinSweep.ps1', 'WinSweepUI.ps1', 'WinSweepTray.ps1') {
+        Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination (Join-Path $installDir $file) -Force
     }
+    $dll = Join-Path $installDir 'WinSweep.Native.dll'
+    if (Test-Path -LiteralPath $dll) { Remove-Item -LiteralPath $dll -Force }
+    Add-Type -TypeDefinition (Get-Content -LiteralPath (Join-Path $PSScriptRoot 'WinSweepNative.cs') -Raw) `
+        -OutputAssembly $dll -OutputType Library
+    & $trayPath -ExportIcon (Join-Path $installDir 'WinSweep.ico')
+    $schedule = Set-Schedule (Join-Path $installDir 'settings.json') $oldTrigger $oldEnabled
 
-    # SYSTEM runs the cleaner from this folder, so only admins and SYSTEM may change files in it.
-    # By default any user can add files under C:\ProgramData. SIDs work on every Windows language:
-    # S-1-5-18 SYSTEM, S-1-5-32-544 Administrators, S-1-5-32-545 Users.
-    & icacls.exe $installDir /setowner '*S-1-5-32-544' /T /C /Q | Out-Null
-    & icacls.exe $installDir /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-32-545:(OI)(CI)RX' /Q | Out-Null
-    & icacls.exe "$installDir\*" /reset /T /C /Q | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "Could not set permissions on $installDir." }
-
-    $time = [datetime]::ParseExact($At, 'H:mm', [Globalization.CultureInfo]::InvariantCulture)
+    # ---- Scheduled task: runs the cleaner as SYSTEM when the tray icon starts it
+    foreach ($task in @(@('\', 'WinSweep'), @('\WinSweep\', 'Cleanup'), @('\WinSweep\', 'Settings'), @('\WinSweep\', 'Preview'))) {
+        Unregister-ScheduledTask -TaskPath $task[0] -TaskName $task[1] -Confirm:$false -ErrorAction SilentlyContinue
+    }
     $action    = New-ScheduledTaskAction -Execute 'powershell.exe' `
-                     -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$scriptPath`""
-    $trigger   = New-ScheduledTaskTrigger -Weekly -WeeksInterval 1 -DaysOfWeek $Day -At $time
-    # Local time without a time zone, so the task keeps its clock time after daylight saving changes.
-    $trigger.StartBoundary = $time.ToString('yyyy-MM-dd\THH:mm:ss')
-    $settings  = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries `
-                     -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Hours 2)
+                     -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$(Join-Path $installDir 'WinSweep.ps1')`""
+    $settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+                     -ExecutionTimeLimit (New-TimeSpan -Hours 2) -MultipleInstances IgnoreNew
     $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+    Register-ScheduledTask -TaskPath '\WinSweep\' -TaskName 'Cleanup' -Action $action -Settings $settings `
+        -Principal $principal -Force -Description 'Deletes temp and junk files. Started by the WinSweep tray icon.' | Out-Null
+    # SYSTEM and admins: full control. Signed-in users: start it and read its status.
+    $scheduler = New-Object -ComObject Schedule.Service
+    $scheduler.Connect()
+    $scheduler.GetFolder('\WinSweep').GetTask('Cleanup').SetSecurityDescriptor('D:(A;;FA;;;SY)(A;;FA;;;BA)(A;;GRGX;;;AU)', 0)
 
-    Register-ScheduledTask -TaskName 'WinSweep' -Action $action -Trigger $trigger `
-        -Settings $settings -Principal $principal -Force `
-        -Description 'Weekly cleanup of temp and junk files. Settings: Start menu > WinSweep.' | Out-Null
+    # ---- Tray icon at every sign-in
+    $powershell = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+    Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run' -Name 'WinSweep' -Value "`"$powershell`" $trayArgs"
 
-    $shortcutPath = "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\WinSweep.lnk"
-    $shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcutPath)
-    $shortcut.TargetPath   = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
-    $shortcut.Arguments    = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$uiPath`""
-    $shortcut.IconLocation = "$env:SystemRoot\System32\cleanmgr.exe,0"
+    # ---- Start menu shortcut: starts the tray icon if needed and opens the window
+    $shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut("$env:ProgramData\Microsoft\Windows\Start Menu\Programs\WinSweep.lnk")
+    $shortcut.TargetPath   = $powershell
+    $shortcut.Arguments    = "$trayArgs -Open"
+    $shortcut.IconLocation = "$(Join-Path $installDir 'WinSweep.ico'),0"
     $shortcut.WindowStyle  = 7
-    $shortcut.Description  = 'WinSweep settings'
+    $shortcut.Description  = 'WinSweep'
     $shortcut.Save()
 
-    $version = ((& $scriptPath -ShowSettings) -join "`n" | ConvertFrom-Json).Version
-    $message = "WinSweep $version is installed.`n`nIt cleans every $Day at $At.`nTo change settings or clean now, open Start menu > WinSweep."
+    # Start the tray icon now when this copy runs without the non-admin launcher and UAC is off
+    # (then every program runs with admin rights anyway).
+    $uacOff = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System').EnableLUA -eq 0
+    if (-not $FromLauncher -and $uacOff) { Start-Process $powershell -ArgumentList $trayArgs -WindowStyle Hidden }
+    $trayNote = if ($FromLauncher -or $uacOff) { 'The WinSweep icon next to the clock means it is active. Click it to open WinSweep.' }
+                else { 'The WinSweep icon appears next to the clock at your next sign-in. To start it now, open WinSweep from the Start menu.' }
+
+    $version = ((& (Join-Path $installDir 'WinSweep.ps1') -ShowSettings) -join "`n" | ConvertFrom-Json).Version
+    $when = if ($schedule.Enabled) { "It cleans every $($schedule.Day) at $($schedule.Time)." } else { 'Automatic cleaning is off.' }
+    $message = "WinSweep $version is installed.`n`n$when`n$trayNote"
     Write-Host $message
     if (-not $Quiet) { [Windows.MessageBox]::Show($message, 'WinSweep', 'OK', 'Information') | Out-Null }
 } catch {
