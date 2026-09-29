@@ -30,6 +30,9 @@ param(
     [switch]$ShowSettings
 )
 
+# Version shown in the settings window and in every log. Raise it for each change you share.
+$Version = '1.0.0'
+
 # ============================ Settings ============================
 # Set each step to $true (run) or $false (skip).
 $Steps = [ordered]@{
@@ -81,6 +84,7 @@ $KeepLogs       = Limit-Number $KeepLogs 1 1000
 
 if ($ShowSettings) {
     [ordered]@{
+        Version = $Version
         Steps = $Steps; Labels = $StepLabels; DaysOld = $DaysOld; RecycleBinDays = $RecycleBinDays
         ListFiles = $ListFiles; KeepLogs = $KeepLogs
     } | ConvertTo-Json
@@ -309,7 +313,7 @@ if (-not $DryRun) {
 }
 
 $freeBefore = Get-FreeBytes
-Write-Log $(if ($DryRun) { 'Preview started. Nothing is deleted.' } else { 'Cleanup started.' })
+Write-Log $(if ($DryRun) { "WinSweep $Version. Preview started. Nothing is deleted." } else { "WinSweep $Version. Cleanup started." })
 Write-Log ('Keeping files created or changed in the last {0} days. Free space on {1} {2}' -f
     $DaysOld, $env:SystemDrive, (Format-Size $freeBefore))
 

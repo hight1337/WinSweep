@@ -96,6 +96,10 @@ scheduled task.
 **Does it send any data anywhere?**
 No. There's no network code in the scripts.
 
+**Which version do I have, and how do I update?**
+The version is shown next to the name in the settings window and at the top of each log. To update,
+download the ZIP again and run `Install.cmd`. Your settings and logs are kept.
+
 **Does it work on Windows in other languages?**
 Yes.
 

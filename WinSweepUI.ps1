@@ -123,7 +123,10 @@ $stepHints = @{
     </Grid.RowDefinitions>
 
     <StackPanel Grid.Row="0" Margin="0,0,0,14">
-      <TextBlock Text="WinSweep" FontSize="24" FontWeight="SemiBold"/>
+      <StackPanel Orientation="Horizontal">
+        <TextBlock Text="WinSweep" FontSize="24" FontWeight="SemiBold"/>
+        <TextBlock x:Name="VersionText" Style="{StaticResource Hint}" VerticalAlignment="Bottom" Margin="8,0,0,5"/>
+      </StackPanel>
       <TextBlock Style="{StaticResource Hint}" Margin="0,2,0,0"
                  Text="Deletes temp and junk files, automatically on a schedule or whenever you want. Recent files and files in use are left alone."/>
     </StackPanel>
@@ -241,6 +244,8 @@ $script:taskFound  = $false
 $script:lastStatus = ''
 
 $initial = (& $cleaner -ShowSettings) -join "`n" | ConvertFrom-Json
+$window.FindName('VersionText').Text = "version $($initial.Version)"
+$window.Title = "WinSweep $($initial.Version)"
 
 $stepBoxes = [ordered]@{}
 foreach ($step in $initial.Steps.PSObject.Properties.Name) {

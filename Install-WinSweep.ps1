@@ -90,7 +90,8 @@ try {
     $shortcut.Description  = 'WinSweep settings'
     $shortcut.Save()
 
-    $message = "WinSweep is installed.`n`nIt cleans every $Day at $At.`nTo change settings or clean now, open Start menu > WinSweep."
+    $version = ((& $scriptPath -ShowSettings) -join "`n" | ConvertFrom-Json).Version
+    $message = "WinSweep $version is installed.`n`nIt cleans every $Day at $At.`nTo change settings or clean now, open Start menu > WinSweep."
     Write-Host $message
     if (-not $Quiet) { [Windows.MessageBox]::Show($message, 'WinSweep', 'OK', 'Information') | Out-Null }
 } catch {
