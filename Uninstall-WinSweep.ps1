@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
-    Removes TempCleaner: the scheduled task, the Start menu shortcut and
-    C:\ProgramData\TempCleaner (scripts, settings and logs).
+    Removes WinSweep: the scheduled task, the Start menu shortcut and
+    C:\ProgramData\WinSweep (scripts, settings and logs).
 
 .PARAMETER Quiet
     Do not show the "Removed" message at the end.
@@ -17,11 +17,11 @@ if (-not $identity.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrat
     exit
 }
 
-Unregister-ScheduledTask -TaskName 'TempCleaner' -Confirm:$false -ErrorAction SilentlyContinue
-Remove-Item -LiteralPath "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\Temp Cleaner.lnk" -Force -ErrorAction SilentlyContinue
-Remove-Item -LiteralPath 'C:\ProgramData\TempCleaner' -Recurse -Force -ErrorAction SilentlyContinue
+Unregister-ScheduledTask -TaskName 'WinSweep' -Confirm:$false -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\WinSweep.lnk" -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath 'C:\ProgramData\WinSweep' -Recurse -Force -ErrorAction SilentlyContinue
 
 if (-not $Quiet) {
     Add-Type -AssemblyName PresentationFramework
-    [Windows.MessageBox]::Show('Temp Cleaner was removed.', 'Temp Cleaner', 'OK', 'Information') | Out-Null
+    [Windows.MessageBox]::Show('WinSweep was removed.', 'WinSweep', 'OK', 'Information') | Out-Null
 }

@@ -1,10 +1,10 @@
 <#
 .SYNOPSIS
-    Installs TempCleaner and schedules it to run once a week.
+    Installs WinSweep and schedules it to run once a week.
 
 .DESCRIPTION
-    Copies CleanTemp.ps1 and TempCleanerUI.ps1 to C:\ProgramData\TempCleaner,
-    registers the "TempCleaner" scheduled task and adds a "Temp Cleaner" Start menu
+    Copies WinSweep.ps1 and WinSweepUI.ps1 to C:\ProgramData\WinSweep,
+    registers the "WinSweep" scheduled task and adds a "WinSweep" Start menu
     shortcut that opens the settings window. The task runs as SYSTEM every week on
     -Day at -At. If the PC is off at that time, the task runs as soon as the PC is on again.
     Settings saved in the window (settings.json) are kept when you install again.
@@ -29,21 +29,35 @@ if (-not $identity.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrat
     if ($Quiet) { $arguments += ' -Quiet' }
     try { Start-Process powershell.exe -Verb RunAs -ArgumentList $arguments -ErrorAction Stop }
     catch {
-        [Windows.MessageBox]::Show('Temp Cleaner was not installed, because admin permission was not given.',
-            'Temp Cleaner', 'OK', 'Information') | Out-Null
+        [Windows.MessageBox]::Show('WinSweep was not installed, because admin permission was not given.',
+            'WinSweep', 'OK', 'Information') | Out-Null
     }
     exit
 }
 
 $ErrorActionPreference = 'Stop'
 try {
-    $installDir = 'C:\ProgramData\TempCleaner'
-    $scriptPath = Join-Path $installDir 'CleanTemp.ps1'
-    $uiPath     = Join-Path $installDir 'TempCleanerUI.ps1'
+    $installDir = 'C:\ProgramData\WinSweep'
+    $scriptPath = Join-Path $installDir 'WinSweep.ps1'
+    $uiPath     = Join-Path $installDir 'WinSweepUI.ps1'
 
     New-Item -ItemType Directory -Path $installDir -Force | Out-Null
-    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'CleanTemp.ps1') -Destination $scriptPath -Force
-    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'TempCleanerUI.ps1') -Destination $uiPath -Force
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'WinSweep.ps1') -Destination $scriptPath -Force
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'WinSweepUI.ps1') -Destination $uiPath -Force
+
+    # Replace an install from before the project was renamed ("Temp Cleaner"), keeping its settings and logs.
+    $legacyDir = 'C:\ProgramData\TempCleaner'
+    Unregister-ScheduledTask -TaskName 'TempCleaner' -Confirm:$false -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\Temp Cleaner.lnk" -Force -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $legacyDir) {
+        foreach ($item in 'settings.json', 'logs') {
+            $from = Join-Path $legacyDir $item
+            if ((Test-Path -LiteralPath $from) -and -not (Test-Path -LiteralPath (Join-Path $installDir $item))) {
+                Copy-Item -LiteralPath $from -Destination $installDir -Recurse
+            }
+        }
+        Remove-Item -LiteralPath $legacyDir -Recurse -Force
+    }
 
     # SYSTEM runs the cleaner from this folder, so only admins and SYSTEM may change files in it.
     # By default any user can add files under C:\ProgramData. SIDs work on every Windows language:
@@ -63,25 +77,25 @@ try {
                      -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Hours 2)
     $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
 
-    Register-ScheduledTask -TaskName 'TempCleaner' -Action $action -Trigger $trigger `
+    Register-ScheduledTask -TaskName 'WinSweep' -Action $action -Trigger $trigger `
         -Settings $settings -Principal $principal -Force `
-        -Description 'Weekly cleanup of temp and junk files. Settings: Start menu > Temp Cleaner.' | Out-Null
+        -Description 'Weekly cleanup of temp and junk files. Settings: Start menu > WinSweep.' | Out-Null
 
-    $shortcutPath = "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\Temp Cleaner.lnk"
+    $shortcutPath = "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\WinSweep.lnk"
     $shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcutPath)
     $shortcut.TargetPath   = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
     $shortcut.Arguments    = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$uiPath`""
     $shortcut.IconLocation = "$env:SystemRoot\System32\cleanmgr.exe,0"
     $shortcut.WindowStyle  = 7
-    $shortcut.Description  = 'Temp Cleaner settings'
+    $shortcut.Description  = 'WinSweep settings'
     $shortcut.Save()
 
-    $message = "Temp Cleaner is installed.`n`nIt cleans every $Day at $At.`nTo change settings or clean now, open Start menu > Temp Cleaner."
+    $message = "WinSweep is installed.`n`nIt cleans every $Day at $At.`nTo change settings or clean now, open Start menu > WinSweep."
     Write-Host $message
-    if (-not $Quiet) { [Windows.MessageBox]::Show($message, 'Temp Cleaner', 'OK', 'Information') | Out-Null }
+    if (-not $Quiet) { [Windows.MessageBox]::Show($message, 'WinSweep', 'OK', 'Information') | Out-Null }
 } catch {
-    $message = "Temp Cleaner could not be installed:`n`n$($_.Exception.Message)"
+    $message = "WinSweep could not be installed:`n`n$($_.Exception.Message)"
     Write-Host $message
-    if (-not $Quiet) { [Windows.MessageBox]::Show($message, 'Temp Cleaner', 'OK', 'Error') | Out-Null }
+    if (-not $Quiet) { [Windows.MessageBox]::Show($message, 'WinSweep', 'OK', 'Error') | Out-Null }
     exit 1
 }

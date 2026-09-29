@@ -1,151 +1,119 @@
-# Temp Cleaner
+# WinSweep
 
-**A small, open-source Windows tool that deletes temp and junk files once a week, in the background.**
-No ads, no internet connection, no bundled software. Just readable PowerShell scripts you can check yourself.
+WinSweep deletes temp and junk files on Windows. It runs automatically on a schedule you choose, and
+you can also start a cleanup yourself at any time. It's a few PowerShell scripts and a small settings
+window. It doesn't connect to the internet, and the only things it adds to your system are a scheduled
+task and a Start menu shortcut.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Windows 10 | 11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6)
 ![PowerShell 5.1](https://img.shields.io/badge/PowerShell-5.1-5391FE)
-![No network access](https://img.shields.io/badge/network-none-success)
 
-![Temp Cleaner settings window](docs/screenshot.png)
-
-## Contents
-
-- [Why you can trust it](#why-you-can-trust-it)
-- [Install](#install)
-- [Use](#use)
-- [What it cleans](#what-it-cleans)
-- [What it never touches](#what-it-never-touches)
-- [How it works](#how-it-works)
-- [Uninstall](#uninstall)
-- [FAQ](#faq)
-- [Files in this repository](#files-in-this-repository)
-- [License](#license)
-
-## Why you can trust it
-
-| | |
-|---|---|
-| **Open source, nothing hidden** | About 1,000 lines of plain PowerShell. No `.exe`, no compiled code. Open any file in Notepad and read what it does. |
-| **No internet access** | The scripts never connect to the internet. No telemetry, no updates from a server, no data leaves your PC. |
-| **Only known junk folders** | It deletes only in the folders listed under [What it cleans](#what-it-cleans). The exact paths are in `CleanTemp.ps1`. |
-| **Recent files are safe** | A file is deleted only if it was neither created nor changed in the last 2 days (you can raise this). Files that apps are using right now are skipped. |
-| **Try before you trust** | **Preview** shows exactly what would be deleted, and deletes nothing. |
-| **Everything is logged** | Each cleanup writes a log of what it removed to `C:\ProgramData\TempCleaner\logs`. |
-| **Easy to remove** | `Uninstall.cmd` removes the task, the shortcut and the program folder. Nothing is left behind. |
+![WinSweep settings window](docs/screenshot.png)
 
 ## Install
 
-1. [**Download the ZIP**](https://github.com/hight1337/TempCleaner/archive/refs/heads/main.zip), or click the green **Code** button above, then **Download ZIP**.
-2. Unzip it anywhere.
-3. Open the unzipped folder and double-click **`Install.cmd`**. Click **Yes** when Windows asks for admin permission.
+1. [Download the ZIP](https://github.com/hight1337/WinSweep/archive/refs/heads/main.zip) (or use **Code > Download ZIP** on this page).
+2. Unzip it.
+3. Double-click `Install.cmd` and allow the admin prompt.
 
-> **"Windows protected your PC"?** Click **More info**, then **Run anyway**.
-> Windows shows this for every downloaded script that is not signed with a paid certificate. It is not a virus warning.
+Windows will probably show "Windows protected your PC", because the scripts aren't signed. Click
+**More info**, then **Run anyway**. If you want to check the code first, every file is plain text and
+opens in Notepad.
 
-Requirements: Windows 10 or 11. PowerShell 5.1 is already part of Windows, so there is nothing else to install.
+You need Windows 10 or 11. PowerShell 5.1 comes with Windows, so there's nothing else to install.
 
-## Use
+## Using it
 
-Open **Start menu > Temp Cleaner**. Windows asks for admin permission each time, because cleaning system folders needs it.
+After you install it, WinSweep runs automatically every Sunday at 12:00. You can pick a different day
+and time, or turn automatic runs off. If the PC is off at the scheduled time, it runs the next time you
+turn it on.
 
-| Button | What it does |
-|---|---|
-| **Preview** | Shows what would be deleted and how much space it would free. **Nothing is deleted.** |
-| **Clean now** | Deletes the selected junk files now, with a progress bar and a live log. |
-| **Stop** | Stops a running cleanup. |
-| **Save** | Saves your choices and the schedule. |
-| **Open logs folder** | Opens the folder with the cleanup logs. |
+To change anything, open **WinSweep** from the Start menu. There you can choose what to clean, change
+the day and time, click **Preview** to see what would be deleted (nothing is deleted), or **Clean now**.
+Each cleanup writes a log to `C:\ProgramData\WinSweep\logs`, and the last 10 logs are kept.
 
-By default it cleans **every Sunday at 12:00**. If the PC is off at that time, it cleans the next time the PC is on.
+## What gets deleted
 
-## What it cleans
+A file is deleted only if it was created and last changed more than 2 days ago. Files that are in use
+are skipped. You can change the 2 days in the settings window.
 
 On by default:
 
-| Item | Folder | What it is |
-|---|---|---|
-| User temp folders | `C:\Users\<name>\AppData\Local\Temp` | Installer leftovers and app scratch files |
-| Windows temp folder | `C:\Windows\Temp` | Leftovers from Windows and services |
-| Crash dumps and error reports | `C:\Windows\Minidump`, `C:\Windows\LiveKernelReports`, `C:\ProgramData\Microsoft\Windows\WER`, `C:\Users\<name>\AppData\Local\CrashDumps` | Saved when an app or Windows crashes |
-| Windows Update downloads | `C:\Windows\SoftwareDistribution\Download` | Updates that are already installed. **Skipped while an update waits for a restart.** |
-| Delivery Optimization cache | Managed by Windows | Update files kept to share with other PCs. Cleared with the built-in `Delete-DeliveryOptimizationCache` command. |
+- `C:\Users\<name>\AppData\Local\Temp`, for every user
+- `C:\Windows\Temp`
+- Crash dumps and error reports: `C:\Windows\Minidump`, `C:\Windows\LiveKernelReports`,
+  `C:\ProgramData\Microsoft\Windows\WER` and `AppData\Local\CrashDumps` for every user
+- Windows Update downloads in `C:\Windows\SoftwareDistribution\Download`. This is skipped while an
+  update is waiting for a restart.
+- The Delivery Optimization cache, cleared with Windows' own `Delete-DeliveryOptimizationCache`
 
-Off by default (turn on in the window if you want):
+Off by default:
 
-| Item | What it is |
-|---|---|
-| Old Recycle Bin items | Only items deleted more than 30 days ago (you can change the number) |
-| Old Windows components | Runs the built-in `DISM /Online /Cleanup-Image /StartComponentCleanup`. Slow: 5-30 minutes |
+- Recycle Bin items deleted more than 30 days ago
+- `DISM /Online /Cleanup-Image /StartComponentCleanup`, which removes old versions of Windows
+  components. It takes 5 to 30 minutes.
 
-## What it never touches
+## What it doesn't touch
 
-- Your documents, downloads, desktop, pictures and any other personal files
-- Files created or changed in the last 2 days, and files that are in use
-- Anything outside the folders listed above. It never follows links (junctions or symlinks) out of those folders.
-- Browser caches, Prefetch and event logs. Clearing those makes Windows or apps slower, or removes information you need when troubleshooting.
-- Windows settings and the registry
+Your own files (Documents, Downloads, Desktop and so on), browser caches, Prefetch, event logs, the
+registry and Windows settings. It doesn't follow junctions or symlinks either, so it can't reach
+anything outside the folders listed above.
+
+Browser caches and Prefetch are left alone on purpose. Clearing them mostly makes things slower for a
+while, and they fill up again anyway.
 
 ## How it works
 
+`Install.cmd` copies the scripts to `C:\ProgramData\WinSweep` and sets that folder so only
+administrators can change them. That matters because the scheduled task runs the cleaner as SYSTEM.
+Then it registers a scheduled task named `WinSweep` and adds the Start menu shortcut.
+
+`WinSweep.ps1` does the cleaning. It reads folders with the .NET file APIs instead of `Get-ChildItem`,
+which is about 10 times faster on large folders. On my PC it scans the Windows Update folder (about
+200,000 files) in around a second. Only one cleanup can run at a time.
+
+To try the cleaner without installing it or deleting anything, run this in the unzipped folder:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\WinSweep.ps1 -DryRun
 ```
-Install.cmd
-  └─ copies the scripts to C:\ProgramData\TempCleaner (only admins can change them there)
-  └─ adds the weekly task "TempCleaner" in Task Scheduler (runs as SYSTEM)
-  └─ adds the "Temp Cleaner" Start menu shortcut
-
-Every week, or when you click Clean now
-  └─ CleanTemp.ps1 lists each folder, keeps recent and in-use files,
-     deletes the rest and writes a log
-```
-
-Details:
-
-- **Fast.** It uses Windows' file functions directly, so it scans about 200,000 files in about 1 second.
-- **One run at a time.** The weekly run and **Clean now** can't overlap.
-- **Settings** are saved in `C:\ProgramData\TempCleaner\settings.json`.
-- **Logs:** the last 10 are kept in `C:\ProgramData\TempCleaner\logs`.
 
 ## Uninstall
 
-Double-click **`Uninstall.cmd`** and click **Yes**. This removes the weekly task, the Start menu shortcut and `C:\ProgramData\TempCleaner`.
+Double-click `Uninstall.cmd`. It removes the scheduled task, the Start menu shortcut and
+`C:\ProgramData\WinSweep`, including your settings and logs.
 
 ## FAQ
 
 **Can I get deleted files back?**
-No. Files are deleted directly, not moved to the Recycle Bin. That is why **Preview** exists and why recent files are always kept.
+No. Files are deleted, not moved to the Recycle Bin. Run Preview first if you're not sure.
 
 **Why does it need admin rights?**
-`C:\Windows\Temp`, the Windows Update folder and the scheduled task all need admin rights. The window asks each time you open it, and the installer asks once.
+Cleaning `C:\Windows\Temp` and the Windows Update folder needs them, and so does creating the
+scheduled task.
 
-**Will it slow my PC down?**
-No. It runs once a week for a few seconds in the background. Deleting temp files does not affect how fast apps start.
+**Does it send any data anywhere?**
+No. There's no network code in the scripts.
 
-**Does it work on other languages of Windows?**
-Yes. It uses language-independent system names everywhere.
+**Does it work on Windows in other languages?**
+Yes.
 
-**Can I change the schedule or what gets cleaned?**
-Yes. Open **Start menu > Temp Cleaner**, change the options and click **Save**.
+## Files
 
-## Files in this repository
-
-| File | Purpose |
+| File | What it does |
 |---|---|
-| `CleanTemp.ps1` | The cleaner. Run by the weekly task and by the window |
-| `TempCleanerUI.ps1` | The settings window |
-| `Install-TempCleaner.ps1` | Installer: copies the scripts, locks the program folder to admins, registers the task, adds the shortcut |
-| `Uninstall-TempCleaner.ps1` | Removes everything the installer added |
-| `Install.cmd`, `Uninstall.cmd` | Double-click wrappers for the two scripts |
+| `WinSweep.ps1` | The cleaner. The scheduled task and the settings window both run it |
+| `WinSweepUI.ps1` | The settings window |
+| `Install-WinSweep.ps1` | Copies the scripts, sets folder permissions, creates the task and the shortcut |
+| `Uninstall-WinSweep.ps1` | Removes everything the installer added |
+| `Install.cmd`, `Uninstall.cmd` | Double-click these instead of running the scripts directly |
 
-Try the cleaner from this folder without deleting anything:
+## Contributing
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\CleanTemp.ps1 -DryRun
-```
-
-Found a bug or have an idea? [Open an issue](../../issues).
+Bug reports and pull requests are welcome in [Issues](../../issues). If WinSweep is useful to you, a
+star helps other people find it.
 
 ## License
 
-[MIT](LICENSE). Free to use, change and share. No warranty: use at your own risk, and try **Preview** first.
+[MIT](LICENSE)

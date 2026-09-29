@@ -1,10 +1,10 @@
 <#
 .SYNOPSIS
-    Settings window for TempCleaner.
+    Settings window for WinSweep.
 
 .DESCRIPTION
     Turn cleanup steps on or off, change the weekly schedule, preview a cleanup,
-    run one now and read the logs. Save writes settings.json next to CleanTemp.ps1
+    run one now and read the logs. Save writes settings.json next to WinSweep.ps1
     and updates the scheduled task. Preview and Clean now use the choices on screen
     without saving them. Opens with a UAC prompt, because changing the scheduled task
     and cleaning system folders needs admin rights.
@@ -20,21 +20,21 @@ if (-not $identity.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrat
             -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$PSCommandPath`""
     } catch {
         [Windows.MessageBox]::Show(
-            "Temp Cleaner needs admin rights to change the schedule and clean system folders.`n`nOpen it again and click Yes when Windows asks.",
-            'Temp Cleaner', 'OK', 'Information') | Out-Null
+            "WinSweep needs admin rights to change the schedule and clean system folders.`n`nOpen it again and click Yes when Windows asks.",
+            'WinSweep', 'OK', 'Information') | Out-Null
     }
     exit
 }
 
 $appDir       = $PSScriptRoot
-$cleaner      = Join-Path $appDir 'CleanTemp.ps1'
+$cleaner      = Join-Path $appDir 'WinSweep.ps1'
 $settingsFile = Join-Path $appDir 'settings.json'
 $logDir       = Join-Path $appDir 'logs'
-$taskName     = 'TempCleaner'
+$taskName     = 'WinSweep'
 $dayNames     = 'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'
 $maxOutputLines = 2000
 
-# Short explanation under each step. Step names come from CleanTemp.ps1.
+# Short explanation under each step. Step names come from WinSweep.ps1.
 $stepHints = @{
     UserTemp             = 'Installer leftovers and app scratch files'
     WindowsTemp          = 'Leftovers from Windows and services'
@@ -48,7 +48,7 @@ $stepHints = @{
 [xml]$xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Temp Cleaner" Width="880" Height="880" MinWidth="780" MinHeight="600"
+        Title="WinSweep" Width="880" Height="880" MinWidth="780" MinHeight="600"
         WindowStartupLocation="CenterScreen" Background="#F3F3F3"
         FontFamily="Segoe UI" FontSize="13" Foreground="#1B1B1B">
   <Window.Resources>
@@ -123,9 +123,9 @@ $stepHints = @{
     </Grid.RowDefinitions>
 
     <StackPanel Grid.Row="0" Margin="0,0,0,14">
-      <TextBlock Text="Temp Cleaner" FontSize="24" FontWeight="SemiBold"/>
+      <TextBlock Text="WinSweep" FontSize="24" FontWeight="SemiBold"/>
       <TextBlock Style="{StaticResource Hint}" Margin="0,2,0,0"
-                 Text="Deletes temp and junk files on a schedule. Files created or changed recently, or still in use, are never touched."/>
+                 Text="Deletes temp and junk files, automatically on a schedule or whenever you want. Recent files and files in use are left alone."/>
     </StackPanel>
 
     <Grid Grid.Row="1">
@@ -259,7 +259,7 @@ $dayNames | ForEach-Object { $DayBox.Items.Add($_) | Out-Null }
 
 # --------------------------- Helpers -----------------------------
 function Show-Error([string]$message) {
-    [Windows.MessageBox]::Show($window, $message, 'Temp Cleaner', 'OK', 'Warning') | Out-Null
+    [Windows.MessageBox]::Show($window, $message, 'WinSweep', 'OK', 'Warning') | Out-Null
 }
 
 function Update-Controls {
@@ -404,7 +404,7 @@ function Set-ProgressView([string]$title, [string]$detail, [double]$percent) {
     }
 }
 
-# Line format from CleanTemp.ps1: "@progress|step number|step count|step name|fraction|detail".
+# Line format from WinSweep.ps1: "@progress|step number|step count|step name|fraction|detail".
 # Fraction -1 means the step does not know how far along it is yet.
 function Show-ProgressLine([string]$line) {
     $parts = $line -split '\|', 6
@@ -493,9 +493,9 @@ $timer.Add_Tick({
 })
 
 function Start-Cleaner([bool]$dryRun) {
-    $script:runSettings = Join-Path $env:TEMP ('TempCleaner-settings-{0}.json' -f [guid]::NewGuid())
+    $script:runSettings = Join-Path $env:TEMP ('WinSweep-settings-{0}.json' -f [guid]::NewGuid())
     try { Write-SettingsFile $script:runSettings } catch { Show-Error $_.Exception.Message; return }
-    $script:liveLog  = Join-Path $env:TEMP ('TempCleaner-live-{0}.log' -f [guid]::NewGuid())
+    $script:liveLog  = Join-Path $env:TEMP ('WinSweep-live-{0}.log' -f [guid]::NewGuid())
     $script:dryRun   = $dryRun
     $script:stopped  = $false
     $script:pending  = ''
@@ -534,7 +534,7 @@ $ScheduleOn.Add_Click({ Set-Dirty })
 $SaveButton.Add_Click({ try { Save-All } catch { Show-Error $_.Exception.Message } })
 $PreviewButton.Add_Click({ Start-Cleaner $true })
 $CleanButton.Add_Click({
-    $answer = [Windows.MessageBox]::Show($window, 'Delete the selected junk files now?', 'Temp Cleaner', 'YesNo', 'Question')
+    $answer = [Windows.MessageBox]::Show($window, 'Delete the selected junk files now?', 'WinSweep', 'YesNo', 'Question')
     if ($answer -eq 'Yes') { Start-Cleaner $false }
 })
 $StopButton.Add_Click({ Stop-Cleaner })
@@ -546,11 +546,11 @@ $LogsButton.Add_Click({
 $window.Add_Closing({
     param($source, $e)
     if ($script:busy) {
-        $answer = [Windows.MessageBox]::Show($window, 'A cleanup is still running. Stop it and close?', 'Temp Cleaner', 'YesNo', 'Question')
+        $answer = [Windows.MessageBox]::Show($window, 'A cleanup is still running. Stop it and close?', 'WinSweep', 'YesNo', 'Question')
         if ($answer -ne 'Yes') { $e.Cancel = $true; return }
         Stop-Cleaner
     } elseif ($script:dirty) {
-        $answer = [Windows.MessageBox]::Show($window, 'Save your changes before closing?', 'Temp Cleaner', 'YesNoCancel', 'Question')
+        $answer = [Windows.MessageBox]::Show($window, 'Save your changes before closing?', 'WinSweep', 'YesNoCancel', 'Question')
         if ($answer -eq 'Cancel') { $e.Cancel = $true; return }
         if ($answer -eq 'Yes') {
             try { Save-All } catch { Show-Error $_.Exception.Message; $e.Cancel = $true; return }

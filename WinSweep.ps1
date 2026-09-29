@@ -4,7 +4,7 @@
 
 .DESCRIPTION
     Each cleanup step can be turned on or off. The defaults are in the Settings block
-    below; settings.json next to this script (written by TempCleanerUI.ps1) overrides them.
+    below; settings.json next to this script (written by WinSweepUI.ps1) overrides them.
     A file is removed only if it was neither created nor changed in the last $DaysOld days,
     so files that running apps and installers still use are left alone. Locked files are
     skipped and counted. Every real run writes a log to the logs folder next to this script.
@@ -291,7 +291,7 @@ function Invoke-FreeSpaceStep([string]$label, [string]$progressText, [scriptbloc
 # ------------------------------ Run ------------------------------
 if (-not $DryRun) {
     # Only one cleanup at a time: the weekly task and "Clean now" could overlap.
-    $mutex = New-Object Threading.Mutex($false, 'Global\TempCleaner')
+    $mutex = New-Object Threading.Mutex($false, 'Global\WinSweep')
     try { $owned = $mutex.WaitOne(0) } catch [Threading.AbandonedMutexException] { $owned = $true }
     if (-not $owned) {
         Write-Log 'Another cleanup is already running. Try again when it has finished.'
